@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/"
+title = "إمتلاك - إدارة العقارات"
+description = "تطبيق موبايل لإدارة وتتبع مصاريف الإيجار، يعمل بشكل كامل بدون إنترنت (Offline-First). يوفر إدارة المباني والوحدات السكنية، متابعة المستأجرين والعقود، الترحيل التلقائي للإيجارات الشهرية، تسجيل الدفعات وإصدار سندات قبض PDF، دعم العملات المتعددة، تتبع مصاريف الصيانة، وتقارير الأرباح والخسائر. الواجهة باللغة العربية بالكامل (RTL)."
+version = "1.0.0"
+id = "artifacts/mobile"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 18115
+
+[services.development]
+run = "pnpm --filter @workspace/mobile run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/mobile", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/mobile", "run", "serve" ]
+
+[services.env]
+PORT = "18115"
+BASE_PATH = "/"
