@@ -1,0 +1,373 @@
+# هيكل قواعد البيانات لنظام إمتلاك
+
+
+## 📊 جداول قاعدة البيانات مُصنفة حسب المجموعات
+---
+### ⚙️ إعدادات النظام
+1. **جدول `AppSettings`:** يحتوي على إعدادات التطبيق العامة وبيانات المالك (مستخدم واحد فقط).
+
+### 🏢 إدارة المباني
+2. **جدول `Buildings`:** يحتوي على المباني التي يملكها المستخدم.
+3. **جدول `Floors`:** يحتوي على طوابق كل مبنى.
+4. **جدول `Units`:** يحتوي على الوحدات الإيجارية (شقق، محلات...) داخل كل طابق.
+
+### 👥 إدارة المستأجرين والعقود
+5. **جدول `Tenants`:** يحتوي على بيانات المستأجرين.
+6. **جدول `Contracts`:** يربط المستأجر بوحدة، ويمثل عقد الإيجار.
+7. **جدول `RentTransactions`:** يسجل عمليات الإيجار الشهرية المستحقة تلقائياً أو يدوياً لكل عقد نشط. هو أساس تتبع المستحقات وحساب المتأخرات.
+
+### 💰 المعاملات المالية
+8. **جدول `Payments`:** يسجل الدفعات الفعلية المستلمة من المستأجرين.
+9. **جدول `MaintenanceExpenses`:** يسجل مصاريف الصيانة والترميم التي يتحملها المالك.
+10. **جدول `Currencies`:** يحتوي على العملات التي يتعامل بها المالك (الأساسية والأجنبية).
+11. **جدول `ExchangeRates`:** يسجل أسعار الصرف بين العملات في تواريخ محددة.
+
+---
+---
+
+# الكيانات وجداول قاعدة البيانات التفصيلية
+---
+## 1. جدول `RentTransactions`
+---
+هذا الجدول يسجل عمليات الإيجار الشهرية المستحقة تلقائياً أو يدوياً لكل عقد نشط. هو أساس تتبع المستحقات وحساب المتأخرات.
+
+**الخصائص:**
+```sql
+Id                  INTEGER PRIMARY KEY AUTOINCREMENT  -- المعرف الفريد للسجل
+contract_id         INTEGER NOT NULL                   -- FK → Contracts.id، يحدد العقد المرتبط بالعملية
+month               TEXT    NOT NULL                   -- الشهر المستحق بصيغة YYYY-MM (مثال: 2026-06)
+amount_due          REAL    NOT NULL                   -- المبلغ المستحق لهذا الشهر (بعملة العقد)
+equivalent_base_due REAL    DEFAULT 0                   -- المبلغ المحول للعملة الأساسية (يساعد في التقارير الموحدة)
+is_added_automatically INTEGER NOT NULL DEFAULT 1       -- 1=مضاف تلقائياً بالترحيل الشهري، 0=مضاف يدوياً
+created_at          TEXT    NOT NULL                   -- تاريخ ووقت إنشاء السجل
+notes               TEXT    DEFAULT NULL               -- ملاحظات إضافية اختيارية
+```
+
+**ملاحظات:**
+- يتم إنشاء سجل لكل عقد نشط في بداية كل شهر ميلادي عبر مهمة `WorkManager`.
+- `equivalent_base_due` يحسب باستخدام سعر الصرف الساري وقت الإنشاء لتوحيد التقارير.
+- الحقل `is_added_automatically` يفرق بين الإيجار المضاف تلقائياً وأي إضافة يدوية (مثل غرامة تأخير).
+- لا يمكن أن يوجد أكثر من سجل لنفس `contract_id` ونفس `month` (قيد فريد).
+
+## 2. جدول `AppSettings`
+---
+يحتوي على إعدادات التطبيق العامة وبيانات المالك (مستخدم واحد فقط).
+
+**الخصائص:**
+```sql
+Id                  INTEGER PRIMARY KEY  -- المعرف (سجل واحد فقط في الجدول)
+owner_name          TEXT    NOT NULL     -- اسم المالك أو المدير
+owner_signature     TEXT    DEFAULT NULL -- مسار صورة التوقيع في ذاكرة الجهاز
+default_currency_id INTEGER NOT NULL     -- FK → Currencies.id، العملة الأساسية للنظام
+backup_frequency    TEXT    DEFAULT 'monthly' -- تكرار النسخ الاحتياطي (daily, weekly, monthly, manual)
+last_backup_date    TEXT    DEFAULT NULL -- تاريخ آخر نسخ احتياطي ناجح (YYYY-MM-DD)
+created_at          TEXT    NOT NULL     -- تاريخ إنشاء الإعدادات
+```
+
+**ملاحظات:**
+- هذا الجدول لا يحتوي إلا على صف واحد يمثل إعدادات المستخدم الوحيد.
+- الـ`default_currency_id` يحدد العملة التي تظهر بها التقارير والأرباح.
+
+## 3. جدول `Currencies`
+---
+يحتوي على العملات التي يتعامل بها المالك (الأساسية والأجنبية).
+
+**الخصائص:**
+```sql
+Id      INTEGER PRIMARY KEY AUTOINCREMENT -- المعرف الفريد
+code    TEXT    NOT NULL UNIQUE           -- رمز العملة (USD, SAR, YER...)
+name    TEXT    NOT NULL                  -- اسم العملة (دولار، ريال سعودي، ريال يمني...)
+symbol  TEXT    NOT NULL                  -- رمز العملة ($, ﷼, ﷼...)
+is_base INTEGER NOT NULL DEFAULT 0        -- 1 = العملة الأساسية، 0 = عملة أجنبية
+```
+
+**ملاحظات:**
+- يجب أن تكون هناك عملة واحدة فقط بقيمة `is_base = 1`.
+- `code` يستخدم في التعامل مع APIs أو عرض موحد.
+
+## 4. جدول `ExchangeRates`
+---
+يسجل أسعار الصرف بين العملات في تواريخ محددة.
+
+**الخصائص:**
+```sql
+Id                INTEGER PRIMARY KEY AUTOINCREMENT -- المعرف الفريد
+from_currency_id  INTEGER NOT NULL                  -- FK → Currencies.id، العملة المصدر
+to_currency_id    INTEGER NOT NULL                  -- FK → Currencies.id، العملة الهدف (غالباً الأساسية)
+rate              REAL    NOT NULL                  -- سعر الصرف (كم من to_currency تساوي 1 من from_currency)
+date              TEXT    NOT NULL                  -- تاريخ اعتماد السعر (YYYY-MM-DD)
+```
+
+**ملاحظات:**
+- يُستخدم السعر الأحدث (حسب التاريخ) عند تسجيل دفعة أو ترحيل إيجار.
+- يمكن إدخال الأسعار يدوياً أو جلبها من API عند توفر الاتصال.
+- الدفعات القديمة لا تتغير بتغير السعر، لأن السعر يُخزن مع الدفعة نفسها.
+## 5. جدول `Buildings`
+---
+يحتوي على المباني التي يملكها المستخدم.
+
+**الخصائص:**
+```sql
+Id      INTEGER PRIMARY KEY AUTOINCREMENT -- المعرف الفريد
+name    TEXT    NOT NULL                  -- اسم المبنى (عمارة النور، برج السلام...)
+address TEXT    DEFAULT NULL              -- عنوان المبنى
+notes   TEXT    DEFAULT NULL              -- ملاحظات
+```
+
+## 6. جدول `Floors`
+---
+يحتوي على طوابق كل مبنى.
+
+**الخصائص:**
+```sql
+Id           INTEGER PRIMARY KEY AUTOINCREMENT -- المعرف الفريد
+building_id  INTEGER NOT NULL                  -- FK → Buildings.id، المبنى الذي يتبعه الطابق
+floor_number INTEGER NOT NULL                  -- رقم الطابق (0=أرضي، 1=أول...)
+```
+
+**ملاحظات:**
+- لا يمكن تكرار نفس `floor_number` لنفس `building_id` (قيد فريد).
+
+## 7. جدول `Units`
+---
+يحتوي على الوحدات الإيجارية (شقق، محلات...) داخل كل طابق.
+
+**الخصائص:**
+```sql
+Id          INTEGER PRIMARY KEY AUTOINCREMENT -- المعرف الفريد
+floor_id    INTEGER NOT NULL                  -- FK → Floors.id، الطابق الذي توجد فيه الوحدة
+unit_number TEXT    NOT NULL                  -- رقم الوحدة أو اسمها (101، شقة 2...)
+status      TEXT    NOT NULL DEFAULT 'vacant' -- الحالة: vacant, rented, under_maintenance, after_exit
+notes       TEXT    DEFAULT NULL              -- ملاحظات
+```
+
+**ملاحظات:**
+- `status` هو حقل نصي مقيد بالقيم المذكورة (يمكن تمثيله بـ enum في الكود).
+- لا يمكن إنشاء عقد نشط على وحدة حالتها `rented`.
+
+## 8. جدول `Tenants`
+---
+يحتوي على بيانات المستأجرين.
+
+**الخصائص:**
+```sql
+Id          INTEGER PRIMARY KEY AUTOINCREMENT -- المعرف الفريد
+full_name   TEXT    NOT NULL                  -- اسم المستأجر الكامل
+phone       TEXT    DEFAULT NULL              -- رقم الهاتف
+id_document TEXT    DEFAULT NULL              -- رقم وثيقة الهوية أو مسار صورتها
+notes       TEXT    DEFAULT NULL              -- ملاحظات
+```
+
+## 9. جدول `Contracts`
+---
+يربط المستأجر بوحدة، ويمثل عقد الإيجار.
+
+**الخصائص:**
+```sql
+Id           INTEGER PRIMARY KEY AUTOINCREMENT -- المعرف الفريد
+tenant_id    INTEGER NOT NULL                  -- FK → Tenants.id
+unit_id      INTEGER NOT NULL                  -- FK → Units.id
+monthly_rent REAL    NOT NULL                  -- قيمة الإيجار الشهري (بعملة العقد)
+currency_id  INTEGER NOT NULL                  -- FK → Currencies.id، عملة العقد
+start_date   TEXT    NOT NULL                  -- تاريخ بداية العقد (YYYY-MM-DD)
+end_date     TEXT    NOT NULL                  -- تاريخ نهاية العقد (YYYY-MM-DD)
+is_active    INTEGER NOT NULL DEFAULT 1        -- 1=نشط، 0=منتهي أو ملغى
+notes        TEXT    DEFAULT NULL              -- ملاحظات
+```
+
+**ملاحظات:**
+- عند إنشاء عقد جديد `is_active = 1`، يجب تغيير حالة الوحدة المرتبطة إلى `rented`.
+- عند إنهاء العقد (`is_active = 0`) تتغير حالة الوحدة إلى `after_exit`.
+- `monthly_rent` هو الأساس الذي تُبنى عليه `RentTransactions.amount_due`.
+
+## 10. جدول `Payments`
+---
+يسجل الدفعات الفعلية المستلمة من المستأجرين.
+
+**الخصائص:**
+```sql
+Id                     INTEGER PRIMARY KEY AUTOINCREMENT -- المعرف الفريد
+contract_id            INTEGER NOT NULL                  -- FK → Contracts.id
+amount_paid            REAL    NOT NULL                  -- المبلغ المدفوع (بعملة الدفع)
+currency_id            INTEGER NOT NULL                  -- FK → Currencies.id، عملة الدفع
+exchange_rate_id       INTEGER DEFAULT NULL              -- FK → ExchangeRates.id، سعر الصرف المستخدم (NULL إذا العملة هي الأساسية)
+equivalent_base_amount REAL    NOT NULL                  -- ما يعادل المبلغ بالعملة الأساسية
+payment_date           TEXT    NOT NULL                  -- تاريخ الدفع (YYYY-MM-DD)
+payment_method         TEXT    NOT NULL                  -- طريقة الدفع (cash, bank_transfer, cheque...)
+receipt_number         TEXT    DEFAULT NULL              -- رقم سند القبض (تسلسلي)
+notes                  TEXT    DEFAULT NULL              -- ملاحظات
+```
+
+**ملاحظات:**
+- `exchange_rate_id` يكون NULL فقط إذا تم الدفع بالعملة الأساسية.
+- `equivalent_base_amount` = `amount_paid * rate` (باستخدام سعر الصرف المختار).
+- `receipt_number` يمكن توليده تلقائياً (مثل: RCP-0001) أو يدوياً.
+
+## 11. جدول `MaintenanceExpenses`
+---
+يسجل مصاريف الصيانة والترميم التي يتحملها المالك.
+
+**الخصائص:**
+```sql
+Id           INTEGER PRIMARY KEY AUTOINCREMENT -- المعرف الفريد
+unit_id      INTEGER DEFAULT NULL              -- FK → Units.id (NULL = مصروف عام غير مرتبط بوحدة)
+description  TEXT    NOT NULL                  -- وصف المصروف (ترميم سباكة، دهان...)
+amount       REAL    NOT NULL                  -- المبلغ بالعملة الأساسية
+expense_date TEXT    NOT NULL                  -- تاريخ المصروف (YYYY-MM-DD)
+notes        TEXT    DEFAULT NULL              -- ملاحظات
+```
+
+**ملاحظات:**
+- `unit_id` يمكن أن يكون NULL للمصاريف العامة (مثل صيانة المصعد أو بوابة المبنى).
+- المبلغ يُفترض أنه بالعملة الأساسية مباشرة لتوحيد التقارير.
+
+# نظرة عامة على الجداول (11 جداول)
+---
+
+| #   | الجدول                | الوظيفة                    |
+| --- | --------------------- | -------------------------- |
+| 1   | `AppSettings`         | إعدادات التطبيق والمستخدم  |
+| 2   | `Currencies`          | العملات المدعومة           |
+| 3   | `ExchangeRates`       | أسعار الصرف بين العملات    |
+| 4   | `Buildings`           | المباني                    |
+| 5   | `Floors`              | الطوابق                    |
+| 6   | `Units`               | الوحدات/الشقق              |
+| 7   | `Tenants`             | المستأجرون                 |
+| 8   | `Contracts`           | عقود الإيجار               |
+| 9   | `RentTransactions`    | الإيجارات الشهرية المستحقة |
+| 10  | `Payments`            | الدفعات الفعلية            |
+| 11  | `MaintenanceExpenses` | مصاريف الصيانة             |
+
+--- 
+---
+# المخطط الهندسي لقواعد البيانات
+---
+## مخطط الـ Class Digram:
+```mermaid
+erDiagram
+    AppSettings ||--|| Currencies : "default_currency"
+    Currencies ||--o{ ExchangeRates : "from_currency"
+    Currencies ||--o{ ExchangeRates : "to_currency"
+    Buildings ||--o{ Floors : "has"
+    Floors ||--o{ Units : "has"
+    Units ||--o{ Contracts : "rented_via"
+    Tenants ||--o{ Contracts : "signs"
+    Contracts ||--o{ RentTransactions : "generates"
+    Contracts ||--o{ Payments : "receives"
+    Payments }o--|| Currencies : "paid_in"
+    Payments }o--|| ExchangeRates : "uses_rate"
+    Units ||--o{ MaintenanceExpenses : "incurs"
+
+    AppSettings {
+        int id PK
+        string owner_name
+        string owner_signature
+        int default_currency_id FK
+        string backup_frequency
+        string last_backup_date
+    }
+
+    Currencies {
+        int id PK
+        string code
+        string name
+        string symbol
+        bool is_base
+    }
+
+    ExchangeRates {
+        int id PK
+        int from_currency_id FK
+        int to_currency_id FK
+        float rate
+        date date
+    }
+
+    Buildings {
+        int id PK
+        string name
+        string address
+        string notes
+    }
+
+    Floors {
+        int id PK
+        int building_id FK
+        int floor_number
+    }
+
+    Units {
+        int id PK
+        int floor_id FK
+        string unit_number
+        string status
+        string notes
+    }
+
+    Tenants {
+        int id PK
+        string full_name
+        string phone
+        string id_document
+        string notes
+    }
+
+    Contracts {
+        int id PK
+        int tenant_id FK
+        int unit_id FK
+        float monthly_rent
+        int currency_id FK
+        date start_date
+        date end_date
+        bool is_active
+        string notes
+    }
+
+    RentTransactions {
+        int id PK
+        int contract_id FK
+        string month
+        float amount_due
+        bool is_added_automatically
+        string notes
+    }
+
+    Payments {
+        int id PK
+        int contract_id FK
+        float amount_paid
+        int currency_id FK
+        int exchange_rate_id FK
+        float equivalent_base_amount
+        date payment_date
+        string payment_method
+        string receipt_number
+        string notes
+    }
+
+    MaintenanceExpenses {
+        int id PK
+        int unit_id FK
+        string description
+        float amount
+        date expense_date
+        string notes
+    }
+```
+## شرح العلاقات في المخطط:
+---
+
+| العلاقة                            | وصفها                                                             |
+| ---------------------------------- | ----------------------------------------------------------------- |
+| `AppSettings` إلى `Currencies`     | واحد لواحد: يحدد المستخدم عملة أساسية واحدة فقط.                  |
+| `Currencies` إلى `ExchangeRates`   | عملة لها عدة أسعار صرف (كعملة "من" وعملة "إلى").                  |
+| `Buildings` إلى `Floors`           | المبنى يحتوي عدة طوابق.                                           |
+| `Floors` إلى `Units`               | الطابق يحتوي عدة وحدات (شقق).                                     |
+| `Units` إلى `Contracts`            | الوحدة قد تكون مؤجرة بعقد نشط واحد (أو بدون عقد إذا كانت فارغة).  |
+| `Tenants` إلى `Contracts`          | المستأجر يوقع عدة عقود (قديماً وجديداً).                          |
+| `Contracts` إلى `RentTransactions` | كل عقد يولّد سجلات إيجار شهرية تلقائية.                           |
+| `Contracts` إلى `Payments`         | كل عقد يستقبل عدة دفعات فعلية من المستأجر.                        |
+| `Payments` إلى `Currencies`        | كل دفعة مسجلة بعملة محددة.                                        |
+| `Payments` إلى `ExchangeRates`     | الدفعة بعملة أجنبية تستخدم سعر صرف معين لتحويلها للعملة الأساسية. |
+| `Units` إلى `MaintenanceExpenses`  | الوحدة قد تتحمل عدة مصاريف صيانة.                                 |
