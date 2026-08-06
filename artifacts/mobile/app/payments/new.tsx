@@ -17,8 +17,7 @@ const S = '#10B981';
 const PAYMENT_METHODS: { value: PaymentMethod; label: string; icon: string }[] = [
   { value: 'cash', label: 'نقداً', icon: 'cash-outline' },
   { value: 'bank_transfer', label: 'تحويل بنكي', icon: 'card-outline' },
-  { value: 'check', label: 'شيك', icon: 'document-text-outline' },
-  { value: 'mobile_payment', label: 'دفع إلكتروني', icon: 'phone-portrait-outline' },
+  { value: 'cheque', label: 'شيك', icon: 'document-text-outline' },
 ];
 
 export default function NewPaymentScreen() {
@@ -67,12 +66,12 @@ export default function NewPaymentScreen() {
       }
       await addPayment({
         contractId,
-        amount: amt,
+        amountPaid: amt,
         currencyId,
         equivalentBaseAmount: equivBase,
         paymentDate,
         paymentMethod: method,
-        note: note.trim() || undefined,
+        notes: note.trim() || undefined,
       });
       Alert.alert('تم', 'تم تسجيل الدفعة بنجاح', [{ text: 'حسناً', onPress: () => router.back() }]);
     } catch (e) {

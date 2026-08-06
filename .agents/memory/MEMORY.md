@@ -1,0 +1,1 @@
+- [إمتلاك mobile app](imtelak-app.md) — Arabic RTL Expo property-management app; all 14 screens written, TypeScript clean, no backend.

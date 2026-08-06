@@ -26,7 +26,7 @@ export default function DashboardScreen() {
           <Text style={s.greeting}>مرحباً، {settings.ownerName}</Text>
           <Text style={s.month}>{formatMonth(new Date())}</Text>
         </View>
-        <TouchableOpacity onPress={() => router.push('/settings/index')} style={s.settingsBtn}>
+        <TouchableOpacity onPress={() => router.push('/settings')} style={s.settingsBtn}>
           <Ionicons name="settings-outline" size={22} color="#FFF" />
         </TouchableOpacity>
       </View>
@@ -67,7 +67,7 @@ export default function DashboardScreen() {
           <View style={s.actRow}>
             <QA icon="add-circle" label="إضافة دفعة" color={S} onPress={() => router.push('/payments/new')} />
             <QA icon="business" label="إضافة مبنى" color={P} onPress={() => router.push('/(tabs)/properties')} />
-            <QA icon="bar-chart" label="التقارير" color={A} onPress={() => router.push('/reports/index')} />
+            <QA icon="bar-chart" label="التقارير" color={A} onPress={() => router.push('/reports')} />
             <QA icon="construct-outline" label="صيانة" color={W} onPress={() => router.push('/(tabs)/transactions')} />
           </View>
         </View>

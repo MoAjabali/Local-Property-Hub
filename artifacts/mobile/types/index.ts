@@ -42,6 +42,7 @@ export interface Contract {
   startDate: string;
   endDate: string;
   isActive: boolean;
+  depositAmount?: number;
   notes?: string;
   createdAt: string;
 }
