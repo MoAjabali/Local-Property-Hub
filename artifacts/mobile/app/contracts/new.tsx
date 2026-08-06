@@ -7,19 +7,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useApp } from '@/context/AppContext';
+import { useSubscription } from '@/context/SubscriptionContext';
 import { getTodayString } from '@/utils/formatters';
 
 const P = '#1B4B82'; const BG = '#F5F7FA'; const CARD = '#FFFFFF';
-const T = '#1A1A2E'; const TM = '#6B7280'; const BORDER = '#E5E7EB'; const D = '#EF4444';
+const T = '#1A1A2E'; const TM = '#6B7280'; const BORDER = '#E5E7EB';
 
 export default function NewContractScreen() {
   const params = useLocalSearchParams<{ tenantId?: string; unitId?: string }>();
-  const {
-    tenants, units, floors, buildings, currencies, addContract,
-    getActiveContractForUnit, getBaseCurrency,
-  } = useApp();
+  const { tenants, units, floors, buildings, currencies, addContract, getActiveContractForUnit, getBaseCurrency } = useApp();
+  const { canAddUnit, canUseForeignCurrency, isPremium } = useSubscription();
   const insets = useSafeAreaInsets();
-  const sym = getBaseCurrency().symbol;
 
   const [tenantId, setTenantId] = useState(params.tenantId || '');
   const [unitId, setUnitId] = useState(params.unitId || '');
@@ -38,6 +36,7 @@ export default function NewContractScreen() {
   const selectedUnit = units.find(u => u.id === unitId);
   const selectedCurrency = currencies.find(c => c.id === currencyId) || getBaseCurrency();
 
+  const totalUnits = units.length;
   const vacantUnits = useMemo(() =>
     units.filter(u => u.status === 'vacant' && !getActiveContractForUnit(u.id)), [units]);
 
@@ -53,11 +52,49 @@ export default function NewContractScreen() {
 
   const canSubmit = tenantId && unitId && monthlyRent.trim() && startDate && endDate;
 
+  const handleUnitSelect = (u: typeof units[0]) => {
+    // Check unit limit for free tier (totalUnits is already existing units, selecting one doesn't add)
+    setUnitId(u.id);
+    setShowUnitPicker(false);
+  };
+
+  const handleCurrencySelect = (id: string) => {
+    const cur = currencies.find(c => c.id === id);
+    if (cur && !cur.isBase && !canUseForeignCurrency()) {
+      setShowCurrencyPicker(false);
+      Alert.alert(
+        '🔒 ميزة مدفوعة',
+        'استخدام العملات الأجنبية في العقود متاح في النسخة المدفوعة فقط.',
+        [
+          { text: 'ترقية الآن', onPress: () => router.push('/subscription') },
+          { text: 'إلغاء', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+    setCurrencyId(id);
+    setShowCurrencyPicker(false);
+  };
+
   const handleSubmit = async () => {
     if (!canSubmit) return;
     const rent = parseFloat(monthlyRent);
     if (isNaN(rent) || rent <= 0) { Alert.alert('خطأ', 'أدخل قيمة إيجار صحيحة'); return; }
     if (new Date(endDate) <= new Date(startDate)) { Alert.alert('خطأ', 'تاريخ النهاية يجب أن يكون بعد البداية'); return; }
+
+    // Free tier: check unit count
+    if (!canAddUnit(totalUnits)) {
+      Alert.alert(
+        '🔒 الحد المجاني',
+        'الحد المجاني هو 3 وحدات فقط.\nقم بالترقية للحصول على وحدات غير محدودة.',
+        [
+          { text: 'ترقية الآن', onPress: () => router.push('/subscription') },
+          { text: 'إلغاء', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+
     setSaving(true);
     try {
       await addContract({
@@ -68,11 +105,9 @@ export default function NewContractScreen() {
         isActive: true,
       });
       Alert.alert('تم', 'تم إنشاء العقد بنجاح', [{ text: 'حسناً', onPress: () => router.back() }]);
-    } catch (e) {
+    } catch {
       Alert.alert('خطأ', 'فشل في حفظ العقد');
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   return (
@@ -87,9 +122,17 @@ export default function NewContractScreen() {
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 40 }}>
+          {/* Free tier warning */}
+          {!isPremium && (
+            <TouchableOpacity style={s.limitBanner} onPress={() => router.push('/subscription')}>
+              <Ionicons name="information-circle" size={16} color="#D97706" />
+              <Text style={s.limitBannerTxt}>النسخة المجانية: 3 وحدات كحد أقصى • عملة واحدة فقط</Text>
+              <Text style={s.limitBannerLink}>ترقية</Text>
+            </TouchableOpacity>
+          )}
+
           <View style={s.card}>
             <Text style={s.sec}>أطراف العقد</Text>
-
             <Text style={s.fl}>المستأجر *</Text>
             <TouchableOpacity style={s.picker} onPress={() => setShowTenantPicker(true)}>
               <Ionicons name="chevron-back" size={18} color={TM} />
@@ -109,8 +152,7 @@ export default function NewContractScreen() {
 
           <View style={s.card}>
             <Text style={s.sec}>بنود العقد</Text>
-
-            <Text style={s.fl}>العملة</Text>
+            <Text style={s.fl}>العملة {!canUseForeignCurrency() ? '🔒 (النسخة المجانية: ريال سعودي فقط)' : ''}</Text>
             <TouchableOpacity style={s.picker} onPress={() => setShowCurrencyPicker(true)}>
               <Ionicons name="chevron-back" size={18} color={TM} />
               <Text style={s.pickerVal}>{selectedCurrency.name} ({selectedCurrency.symbol})</Text>
@@ -180,7 +222,7 @@ export default function NewContractScreen() {
             style={{ maxHeight: 350 }}
             ListEmptyComponent={<Text style={s.emptyList}>لا توجد وحدات شاغرة</Text>}
             renderItem={({ item: u }) => (
-              <TouchableOpacity style={[s.option, unitId === u.id && s.optionActive]} onPress={() => { setUnitId(u.id); setShowUnitPicker(false); }}>
+              <TouchableOpacity style={[s.option, unitId === u.id && s.optionActive]} onPress={() => handleUnitSelect(u)}>
                 <Text style={[s.optionTxt, unitId === u.id && { color: P }]}>{getUnitLabel(u)}</Text>
               </TouchableOpacity>
             )}
@@ -195,8 +237,13 @@ export default function NewContractScreen() {
           <View style={s.handle} />
           <Text style={s.sheetTitle}>اختر العملة</Text>
           {currencies.map(c => (
-            <TouchableOpacity key={c.id} style={[s.option, currencyId === c.id && s.optionActive]} onPress={() => { setCurrencyId(c.id); setShowCurrencyPicker(false); }}>
-              <Text style={[s.optionTxt, currencyId === c.id && { color: P }]}>{c.name} ({c.symbol})</Text>
+            <TouchableOpacity key={c.id} style={[s.option, currencyId === c.id && s.optionActive]} onPress={() => handleCurrencySelect(c.id)}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={[s.optionTxt, currencyId === c.id && { color: P }]}>{c.name} ({c.symbol})</Text>
+                {!c.isBase && !canUseForeignCurrency() && (
+                  <View style={s.lockBadge}><Ionicons name="lock-closed" size={12} color="#FFF" /></View>
+                )}
+              </View>
               {c.isBase && <Text style={s.optionSub}>العملة الأساسية</Text>}
             </TouchableOpacity>
           ))}
@@ -211,22 +258,25 @@ const s = StyleSheet.create({
   header: { paddingHorizontal: 16, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: P },
   backBtn: { padding: 4 },
   title: { fontSize: 18, fontFamily: 'Inter_700Bold', color: '#FFF' },
-  card: { backgroundColor: CARD, borderRadius: 14, padding: 16, marginBottom: 14, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, elevation: 2 },
+  limitBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FEF9EE', borderRadius: 12, padding: 12, marginBottom: 12, borderWidth: 1, borderColor: '#FDE68A' },
+  limitBannerTxt: { flex: 1, fontSize: 12, color: '#92400E', textAlign: 'right' },
+  limitBannerLink: { fontSize: 12, color: '#D97706', fontFamily: 'Inter_700Bold' },
+  card: { backgroundColor: '#FFF', borderRadius: 14, padding: 16, marginBottom: 14, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, elevation: 2 },
   sec: { fontSize: 15, fontFamily: 'Inter_700Bold', color: T, textAlign: 'right', marginBottom: 14 },
   fl: { fontSize: 13, color: T, fontFamily: 'Inter_500Medium', marginBottom: 6, textAlign: 'right' },
-  picker: { backgroundColor: BG, borderRadius: 10, borderWidth: 1, borderColor: BORDER, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  picker: { backgroundColor: '#F5F7FA', borderRadius: 10, borderWidth: 1, borderColor: BORDER, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
   pickerVal: { fontSize: 14, color: T, textAlign: 'right', flex: 1, marginRight: 6 },
   pickerPlaceholder: { fontSize: 14, color: TM, textAlign: 'right', flex: 1, marginRight: 6 },
-  input: { backgroundColor: BG, borderRadius: 10, borderWidth: 1, borderColor: BORDER, padding: 12, fontSize: 14, color: T, marginBottom: 14 },
+  input: { backgroundColor: '#F5F7FA', borderRadius: 10, borderWidth: 1, borderColor: BORDER, padding: 12, fontSize: 14, color: T, marginBottom: 14 },
   amtRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
   amtSym: { fontSize: 16, fontFamily: 'Inter_700Bold', color: TM },
   submit: { backgroundColor: P, borderRadius: 14, padding: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
   submitTxt: { color: '#FFF', fontSize: 16, fontFamily: 'Inter_700Bold' },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  pickerSheet: { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40, maxHeight: '70%' },
+  pickerSheet: { backgroundColor: '#FFF', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40, maxHeight: '70%' },
   handle: { width: 40, height: 4, backgroundColor: BORDER, borderRadius: 2, alignSelf: 'center', marginBottom: 16 },
   sheetTitle: { fontSize: 17, fontFamily: 'Inter_700Bold', color: T, textAlign: 'right', marginBottom: 14 },
-  searchWrap: { flexDirection: 'row', backgroundColor: BG, borderRadius: 10, borderWidth: 1, borderColor: BORDER, alignItems: 'center', marginBottom: 12 },
+  searchWrap: { flexDirection: 'row', backgroundColor: '#F5F7FA', borderRadius: 10, borderWidth: 1, borderColor: BORDER, alignItems: 'center', marginBottom: 12 },
   searchInput: { flex: 1, padding: 10, fontSize: 14, color: T },
   emptyList: { textAlign: 'center', color: TM, padding: 20 },
   option: { padding: 14, borderRadius: 10, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
@@ -235,4 +285,5 @@ const s = StyleSheet.create({
   optionSub: { fontSize: 12, color: TM, textAlign: 'right', marginTop: 2 },
   addLink: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 14, marginTop: 4 },
   addLinkTxt: { color: P, fontSize: 14, fontFamily: 'Inter_600SemiBold' },
+  lockBadge: { backgroundColor: '#6B7280', borderRadius: 6, padding: 4 },
 });

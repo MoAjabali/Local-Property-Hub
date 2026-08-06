@@ -11,6 +11,7 @@ import {
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { AppProvider } from '@/context/AppContext';
+import { SubscriptionProvider } from '@/context/SubscriptionContext';
 
 // Enable RTL for Arabic
 I18nManager.allowRTL(true);
@@ -31,6 +32,7 @@ function RootLayoutNav() {
       <Stack.Screen name="payments/new" options={{ presentation: 'modal', headerShown: false }} />
       <Stack.Screen name="reports/index" options={{ headerShown: false }} />
       <Stack.Screen name="settings/index" options={{ headerShown: false }} />
+      <Stack.Screen name="subscription/index" options={{ presentation: 'modal', headerShown: false }} />
     </Stack>
   );
 }
@@ -51,6 +53,7 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <ErrorBoundary>
+        <SubscriptionProvider>
         <AppProvider>
           <QueryClientProvider client={queryClient}>
             <GestureHandlerRootView style={{ flex: 1 }}>
@@ -60,6 +63,7 @@ export default function RootLayout() {
             </GestureHandlerRootView>
           </QueryClientProvider>
         </AppProvider>
+        </SubscriptionProvider>
       </ErrorBoundary>
     </SafeAreaProvider>
   );

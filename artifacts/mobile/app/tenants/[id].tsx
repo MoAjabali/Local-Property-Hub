@@ -3,8 +3,11 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert } from 'rea
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { useApp } from '@/context/AppContext';
 import { formatCurrency, formatDate, getPaymentMethodLabel } from '@/utils/formatters';
+import { generateReceiptHTML } from '@/utils/receipt';
 
 const P = '#1B4B82'; const BG = '#F5F7FA'; const CARD = '#FFFFFF';
 const T = '#1A1A2E'; const TM = '#6B7280'; const BORDER = '#E5E7EB';
@@ -15,14 +18,15 @@ export default function TenantDetailScreen() {
   const {
     getTenantById, getContractsByTenant, getContractBalance, getUnitById, getFloorById,
     getBuildingById, getCurrencyById, getPaymentsByContract, deleteTenant, getTenantStatement,
-    getBaseCurrency, endContract,
+    getBaseCurrency, endContract, contracts, floors, buildings, currencies,
   } = useApp();
   const insets = useSafeAreaInsets();
 
   const tenant = getTenantById(id!);
   const sym = getBaseCurrency().symbol;
-  const contracts = tenant ? getContractsByTenant(tenant.id) : [];
-  const activeContract = contracts.find(c => c.isActive);
+  const baseCur = getBaseCurrency();
+  const tenantContracts = tenant ? getContractsByTenant(tenant.id) : [];
+  const activeContract = tenantContracts.find(c => c.isActive);
   const balance = activeContract ? getContractBalance(activeContract.id) : null;
   const recentPayments = activeContract ? getPaymentsByContract(activeContract.id).slice(0, 5) : [];
   const statement = tenant ? getTenantStatement(tenant.id) : [];
@@ -34,11 +38,34 @@ export default function TenantDetailScreen() {
     return unit ? `${building?.name || ''} - وحدة ${unit.unitNumber}` : 'وحدة غير محددة';
   };
 
-  const handleDelete = () => {
-    if (activeContract) {
-      Alert.alert('تنبيه', 'لا يمكن حذف مستأجر لديه عقد نشط. أنهِ العقد أولاً.');
-      return;
+  const printPaymentReceipt = async (payment: any) => {
+    try {
+      const contract = contracts.find(c => c.id === payment.contractId);
+      if (!contract || !tenant) return;
+      const unit = getUnitById(contract.unitId);
+      const floor = unit ? getFloorById(unit.floorId) : undefined;
+      const building = floor ? getBuildingById(floor.buildingId) : undefined;
+      const payCurrency = getCurrencyById(payment.currencyId) || baseCur;
+      if (!unit) return;
+
+      const html = generateReceiptHTML({
+        payment, contract, tenant, unit, floor, building,
+        payCurrency, baseCurrency: baseCur, ownerName: 'إمتلاك',
+      });
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'مشاركة الإيصال' });
+      } else {
+        await Print.printAsync({ uri });
+      }
+    } catch {
+      Alert.alert('خطأ', 'فشل في طباعة الإيصال');
     }
+  };
+
+  const handleDelete = () => {
+    if (activeContract) { Alert.alert('تنبيه', 'لا يمكن حذف مستأجر لديه عقد نشط. أنهِ العقد أولاً.'); return; }
     Alert.alert('حذف المستأجر', `هل تريد حذف "${tenant?.fullName}"؟`, [
       { text: 'إلغاء' },
       { text: 'حذف', style: 'destructive', onPress: async () => { await deleteTenant(id!); router.back(); } },
@@ -60,9 +87,7 @@ export default function TenantDetailScreen() {
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <Ionicons name="chevron-forward" size={24} color="#FFF" />
         </TouchableOpacity>
-        <View style={s.avatar}>
-          <Text style={s.avatarTxt}>{tenant.fullName.charAt(0)}</Text>
-        </View>
+        <View style={s.avatar}><Text style={s.avatarTxt}>{tenant.fullName.charAt(0)}</Text></View>
         <View style={{ flex: 1, marginRight: 10 }}>
           <Text style={s.name}>{tenant.fullName}</Text>
           {tenant.phone ? <Text style={s.phone}>{tenant.phone}</Text> : null}
@@ -92,9 +117,7 @@ export default function TenantDetailScreen() {
               {balance && (
                 <View style={[s.balRow, { backgroundColor: balance.balance > 0 ? '#FEF2F2' : '#ECFDF5' }]}>
                   <Text style={[s.balVal, { color: balance.balance > 0 ? D : S }]}>
-                    {balance.balance > 0
-                      ? `متأخر: ${formatCurrency(balance.balance, sym)}`
-                      : `مسدد: ${formatCurrency(balance.totalPaid, sym)}`}
+                    {balance.balance > 0 ? `متأخر: ${formatCurrency(balance.balance, sym)}` : `مسدد: ${formatCurrency(balance.totalPaid, sym)}`}
                   </Text>
                 </View>
               )}
@@ -121,28 +144,34 @@ export default function TenantDetailScreen() {
           <View style={s.noContract}>
             <Ionicons name="document-outline" size={44} color={BORDER} />
             <Text style={s.noContractT}>لا يوجد عقد نشط</Text>
-            <TouchableOpacity
-              style={s.newContractBtn}
-              onPress={() => router.push({ pathname: '/contracts/new', params: { tenantId: tenant.id } })}
-            >
+            <TouchableOpacity style={s.newContractBtn} onPress={() => router.push({ pathname: '/contracts/new', params: { tenantId: tenant.id } })}>
               <Text style={s.newContractTxt}>+ إنشاء عقد جديد</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Recent payments */}
+        {/* Recent payments with print button */}
         {recentPayments.length > 0 && (
           <View style={s.card}>
             <Text style={s.cardTitle}>آخر الدفعات</Text>
             {recentPayments.map(p => (
               <View key={p.id} style={s.payRow}>
+                <TouchableOpacity
+                  style={s.printBtn}
+                  onPress={() => printPaymentReceipt(p)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="print-outline" size={18} color={P} />
+                </TouchableOpacity>
+                <View style={{ alignItems: 'flex-start', flex: 1 }}>
+                  <Text style={s.payDate}>{formatDate(p.paymentDate)}</Text>
+                  <Text style={s.payReceipt}>{p.receiptNumber} • {getPaymentMethodLabel(p.paymentMethod)}</Text>
+                </View>
                 <View style={{ alignItems: 'flex-end' }}>
                   <Text style={s.payAmt}>{formatCurrency(p.equivalentBaseAmount, sym)}</Text>
-                  <Text style={s.payMeta}>{getPaymentMethodLabel(p.paymentMethod)}</Text>
-                </View>
-                <View style={{ alignItems: 'flex-start' }}>
-                  <Text style={s.payDate}>{formatDate(p.paymentDate)}</Text>
-                  <Text style={s.payReceipt}>{p.receiptNumber}</Text>
+                  {p.amountPaid !== p.equivalentBaseAmount && (
+                    <Text style={s.payOriginal}>{formatCurrency(p.amountPaid, getCurrencyById(p.currencyId)?.symbol || sym)}</Text>
+                  )}
                 </View>
               </View>
             ))}
@@ -166,10 +195,10 @@ export default function TenantDetailScreen() {
         )}
 
         {/* Historical contracts */}
-        {contracts.filter(c => !c.isActive).length > 0 && (
+        {tenantContracts.filter(c => !c.isActive).length > 0 && (
           <View style={s.card}>
             <Text style={s.cardTitle}>عقود سابقة</Text>
-            {contracts.filter(c => !c.isActive).map(c => (
+            {tenantContracts.filter(c => !c.isActive).map(c => (
               <View key={c.id} style={s.histRow}>
                 <Text style={s.histDate}>{formatDate(c.startDate)} - {formatDate(c.endDate)}</Text>
                 <Text style={s.histUnit}>{getUnitInfo(c.unitId)}</Text>
@@ -216,9 +245,10 @@ const s = StyleSheet.create({
   noContractT: { fontSize: 15, color: TM },
   newContractBtn: { backgroundColor: P, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 10 },
   newContractTxt: { color: '#FFF', fontFamily: 'Inter_600SemiBold' },
-  payRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
+  payRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F3F4F6', gap: 10 },
+  printBtn: { padding: 6, backgroundColor: '#EEF2FF', borderRadius: 8 },
   payAmt: { fontSize: 14, fontFamily: 'Inter_700Bold', color: S },
-  payMeta: { fontSize: 12, color: TM },
+  payOriginal: { fontSize: 11, color: TM, textAlign: 'right' },
   payDate: { fontSize: 13, color: T },
   payReceipt: { fontSize: 11, color: TM },
   stmRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 8, padding: 10, marginBottom: 6 },

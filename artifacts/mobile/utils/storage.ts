@@ -12,6 +12,8 @@ export const STORAGE_KEYS = {
   CURRENCIES: '@imtelak:currencies',
   EXCHANGE_RATES: '@imtelak:exchangeRates',
   SETTINGS: '@imtelak:settings',
+  SUBSCRIPTION: '@imtelak:subscription',
+  RATE_CACHE: '@imtelak:rateCache',
 };
 
 export async function loadList<T>(key: string): Promise<T[]> {

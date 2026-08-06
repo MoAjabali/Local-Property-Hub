@@ -1,6 +1,21 @@
 export type UnitStatus = 'vacant' | 'rented' | 'under_maintenance' | 'after_exit';
 export type PaymentMethod = 'cash' | 'bank_transfer' | 'cheque';
 export type BackupFrequency = 'daily' | 'weekly' | 'monthly' | 'manual';
+export type SubscriptionTier = 'free' | 'monthly' | 'annual' | 'lifetime';
+
+export interface Subscription {
+  tier: SubscriptionTier;
+  startDate?: string;
+  expiryDate?: string; // undefined = no expiry (lifetime)
+}
+
+export interface SubscriptionPlan {
+  tier: SubscriptionTier;
+  priceLabel: string;
+  period: string;
+  features: string[];
+  highlighted?: boolean;
+}
 
 export interface Building {
   id: string;

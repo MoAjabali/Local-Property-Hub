@@ -1,14 +1,19 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  TextInput, Modal, FlatList, KeyboardAvoidingView, Platform, Alert,
+  TextInput, Modal, FlatList, KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { useApp } from '@/context/AppContext';
+import { useSubscription } from '@/context/SubscriptionContext';
 import { getTodayString, formatCurrency } from '@/utils/formatters';
 import { PaymentMethod } from '@/types';
+import { convertLive } from '@/utils/exchangeRateApi';
+import { generateReceiptHTML } from '@/utils/receipt';
 
 const P = '#1B4B82'; const BG = '#F5F7FA'; const CARD = '#FFFFFF';
 const T = '#1A1A2E'; const TM = '#6B7280'; const BORDER = '#E5E7EB';
@@ -22,27 +27,35 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string; icon: string }[] =
 
 export default function NewPaymentScreen() {
   const params = useLocalSearchParams<{ contractId?: string }>();
-  const { contracts, tenants, units, currencies, addPayment, getContractBalance, getBaseCurrency, getActiveContractForUnit } = useApp();
+  const {
+    contracts, tenants, units, floors, buildings, currencies,
+    addPayment, getContractBalance, getBaseCurrency, addExchangeRate,
+  } = useApp();
+  const { canUseForeignCurrency } = useSubscription();
   const insets = useSafeAreaInsets();
+  const baseCur = getBaseCurrency();
 
   const [contractId, setContractId] = useState(params.contractId || '');
   const [amount, setAmount] = useState('');
-  const [currencyId, setCurrencyId] = useState(getBaseCurrency().id);
+  const [currencyId, setCurrencyId] = useState(baseCur.id);
   const [method, setMethod] = useState<PaymentMethod>('cash');
   const [paymentDate, setPaymentDate] = useState(getTodayString());
   const [note, setNote] = useState('');
   const [showContractPicker, setShowContractPicker] = useState(false);
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
   const [saving, setSaving] = useState(false);
-  const baseCur = getBaseCurrency();
+  const [liveRate, setLiveRate] = useState<number | null>(null);
+  const [fetchingRate, setFetchingRate] = useState(false);
+  const [rateError, setRateError] = useState<string | null>(null);
+  const [lastPayment, setLastPayment] = useState<any>(null);
+
   const selectedCurrency = currencies.find(c => c.id === currencyId) || baseCur;
-
+  const isForeign = selectedCurrency.id !== baseCur.id;
   const activeContracts = useMemo(() => contracts.filter(c => c.isActive), [contracts]);
-
   const selectedContract = contracts.find(c => c.id === contractId);
-  const contractTenant = selectedContract ? tenants.find(t => t.id === selectedContract.tenantId) : undefined;
-  const contractUnit = selectedContract ? units.find(u => u.id === selectedContract.unitId) : undefined;
   const balance = selectedContract ? getContractBalance(selectedContract.id) : undefined;
+  const amt = parseFloat(amount) || 0;
+  const equiv = isForeign && liveRate ? amt * liveRate : amt;
 
   const getContractLabel = (c: typeof contracts[0]) => {
     const tenant = tenants.find(t => t.id === c.tenantId);
@@ -50,34 +63,102 @@ export default function NewPaymentScreen() {
     return `${tenant?.fullName || 'مستأجر'} - وحدة ${unit?.unitNumber || ''}`;
   };
 
-  const canSubmit = contractId && amount.trim();
+  // Fetch live rate when currency changes
+  useEffect(() => {
+    if (!isForeign) { setLiveRate(null); setRateError(null); return; }
+    setFetchingRate(true); setRateError(null);
+    convertLive(1, selectedCurrency.code, baseCur.code).then(res => {
+      if (res) { setLiveRate(res.rate); }
+      else { setRateError('تعذر جلب سعر الصرف. أدخله يدوياً.'); }
+      setFetchingRate(false);
+    });
+  }, [currencyId]);
+
+  const handleCurrencySelect = (id: string) => {
+    const cur = currencies.find(c => c.id === id);
+    if (cur && cur.id !== baseCur.id && !canUseForeignCurrency()) {
+      setShowCurrencyPicker(false);
+      Alert.alert(
+        '🔒 ميزة مدفوعة',
+        'استخدام العملات الأجنبية متاح في النسخة المدفوعة فقط.',
+        [
+          { text: 'ترقية الآن', onPress: () => router.push('/subscription') },
+          { text: 'إلغاء', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+    setCurrencyId(id);
+    setShowCurrencyPicker(false);
+  };
+
+  const canSubmit = contractId && amount.trim() && (!isForeign || liveRate !== null);
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
-    const amt = parseFloat(amount);
     if (isNaN(amt) || amt <= 0) { Alert.alert('خطأ', 'أدخل مبلغاً صحيحاً'); return; }
     setSaving(true);
     try {
-      // Compute base equivalent
-      let equivBase = amt;
-      if (!selectedCurrency.isBase) {
-        // Simplified: no exchange rate lookup for now, use same value
-        equivBase = amt;
-      }
-      await addPayment({
-        contractId,
-        amountPaid: amt,
-        currencyId,
-        equivalentBaseAmount: equivBase,
-        paymentDate,
-        paymentMethod: method,
+      const payment = await addPayment({
+        contractId, amountPaid: amt, currencyId,
+        equivalentBaseAmount: isForeign && liveRate ? amt * liveRate : amt,
+        paymentDate, paymentMethod: method,
         notes: note.trim() || undefined,
       });
-      Alert.alert('تم', 'تم تسجيل الدفعة بنجاح', [{ text: 'حسناً', onPress: () => router.back() }]);
-    } catch (e) {
+
+      // Auto-save exchange rate if foreign
+      if (isForeign && liveRate) {
+        await addExchangeRate({
+          fromCurrencyId: currencyId,
+          toCurrencyId: baseCur.id,
+          rate: liveRate,
+          date: paymentDate,
+        });
+      }
+
+      setLastPayment(payment);
+      Alert.alert(
+        '✅ تم تسجيل الدفعة',
+        `رقم الإيصال: ${payment.receiptNumber}`,
+        [
+          { text: 'طباعة الإيصال', onPress: () => printReceipt(payment) },
+          { text: 'حسناً', onPress: () => router.back() },
+        ]
+      );
+    } catch {
       Alert.alert('خطأ', 'فشل في حفظ الدفعة');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const printReceipt = async (payment: any) => {
+    try {
+      const contract = contracts.find(c => c.id === payment.contractId);
+      if (!contract) return;
+      const tenant = tenants.find(t => t.id === contract.tenantId);
+      const unit = units.find(u => u.id === contract.unitId);
+      const floor = unit ? floors.find(f => f.id === unit.floorId) : undefined;
+      const building = floor ? buildings.find(b => b.id === floor.buildingId) : undefined;
+      const payCurrency = currencies.find(c => c.id === payment.currencyId) || baseCur;
+      if (!tenant || !unit) return;
+
+      const html = generateReceiptHTML({
+        payment, contract, tenant, unit, floor, building,
+        payCurrency, baseCurrency: baseCur, ownerName: 'إمتلاك',
+      });
+
+      const { uri } = await Print.printToFileAsync({ html, base64: false });
+      const canShare = await Sharing.isAvailableAsync();
+      if (canShare) {
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'مشاركة الإيصال' });
+      } else {
+        await Print.printAsync({ uri });
+      }
+      router.back();
+    } catch (e) {
+      Alert.alert('خطأ', 'فشل في طباعة الإيصال');
+      router.back();
     }
   };
 
@@ -119,8 +200,30 @@ export default function NewPaymentScreen() {
             <Text style={s.fl}>العملة</Text>
             <TouchableOpacity style={s.picker} onPress={() => setShowCurrencyPicker(true)}>
               <Ionicons name="chevron-back" size={18} color={TM} />
-              <Text style={s.pickerVal}>{selectedCurrency.name} ({selectedCurrency.symbol})</Text>
+              <Text style={s.pickerVal}>
+                {selectedCurrency.name} ({selectedCurrency.symbol})
+                {!canUseForeignCurrency() && ' 🔒'}
+              </Text>
             </TouchableOpacity>
+
+            {/* Live rate display */}
+            {isForeign && (
+              <View style={s.rateBox}>
+                {fetchingRate ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
+                    <ActivityIndicator size="small" color={P} />
+                    <Text style={{ color: TM, fontSize: 13 }}>جاري جلب سعر الصرف المباشر...</Text>
+                  </View>
+                ) : liveRate ? (
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={s.rateVal}>1 {selectedCurrency.code} = {liveRate.toFixed(4)} {baseCur.code}</Text>
+                    <View style={s.rateLiveBadge}><Text style={s.rateLiveTxt}>مباشر 🔴</Text></View>
+                  </View>
+                ) : rateError ? (
+                  <Text style={{ color: '#D97706', fontSize: 12, textAlign: 'right' }}>⚠️ {rateError}</Text>
+                ) : null}
+              </View>
+            )}
 
             <Text style={s.fl}>المبلغ *</Text>
             <View style={s.amtRow}>
@@ -135,6 +238,14 @@ export default function NewPaymentScreen() {
                 autoFocus={!!contractId}
               />
             </View>
+
+            {/* Equivalent in base currency */}
+            {isForeign && amt > 0 && liveRate && (
+              <View style={s.equivBox}>
+                <Text style={s.equivLabel}>ما يعادل بالعملة الأساسية</Text>
+                <Text style={s.equivVal}>{formatCurrency(equiv, baseCur.symbol)}</Text>
+              </View>
+            )}
 
             <Text style={s.fl}>طريقة الدفع</Text>
             <View style={s.methodsRow}>
@@ -157,9 +268,19 @@ export default function NewPaymentScreen() {
             <TextInput style={[s.input, { height: 60 }]} value={note} onChangeText={setNote} placeholder="أي ملاحظة..." textAlign="right" multiline />
           </View>
 
-          <TouchableOpacity style={[s.submit, !canSubmit && { opacity: 0.5 }]} onPress={handleSubmit} disabled={!canSubmit || saving}>
-            <Ionicons name="checkmark-circle" size={20} color="#FFF" />
-            <Text style={s.submitTxt}>{saving ? 'جاري الحفظ...' : 'تسجيل الدفعة'}</Text>
+          <TouchableOpacity
+            style={[s.submit, (!canSubmit || saving) && { opacity: 0.5 }]}
+            onPress={handleSubmit}
+            disabled={!canSubmit || saving}
+          >
+            {saving ? (
+              <ActivityIndicator color="#FFF" size="small" />
+            ) : (
+              <>
+                <Ionicons name="checkmark-circle" size={20} color="#FFF" />
+                <Text style={s.submitTxt}>تسجيل الدفعة</Text>
+              </>
+            )}
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -195,8 +316,13 @@ export default function NewPaymentScreen() {
           <View style={s.handle} />
           <Text style={s.sheetTitle}>اختر العملة</Text>
           {currencies.map(c => (
-            <TouchableOpacity key={c.id} style={[s.option, currencyId === c.id && s.optionActive]} onPress={() => { setCurrencyId(c.id); setShowCurrencyPicker(false); }}>
-              <Text style={[s.optionTxt, currencyId === c.id && { color: P }]}>{c.name} ({c.symbol})</Text>
+            <TouchableOpacity key={c.id} style={[s.option, currencyId === c.id && s.optionActive]} onPress={() => handleCurrencySelect(c.id)}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={[s.optionTxt, currencyId === c.id && { color: P }]}>{c.name} ({c.symbol})</Text>
+                {!c.isBase && !canUseForeignCurrency() && (
+                  <View style={s.lockBadge}><Ionicons name="lock-closed" size={12} color="#FFF" /><Text style={s.lockTxt}>مدفوع</Text></View>
+                )}
+              </View>
             </TouchableOpacity>
           ))}
         </View>
@@ -219,11 +345,18 @@ const s = StyleSheet.create({
   balanceInfo: { borderRadius: 10, padding: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   balanceLbl: { fontSize: 13, color: TM },
   balanceVal: { fontSize: 15, fontFamily: 'Inter_700Bold' },
+  rateBox: { backgroundColor: '#EEF2FF', borderRadius: 10, padding: 12, marginBottom: 14 },
+  rateVal: { fontSize: 13, color: P, fontFamily: 'Inter_600SemiBold' },
+  rateLiveBadge: { backgroundColor: '#FEE2E2', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  rateLiveTxt: { fontSize: 11, color: '#EF4444', fontFamily: 'Inter_600SemiBold' },
+  equivBox: { backgroundColor: '#ECFDF5', borderRadius: 10, padding: 12, marginBottom: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  equivLabel: { fontSize: 13, color: '#047857' },
+  equivVal: { fontSize: 15, fontFamily: 'Inter_700Bold', color: S },
   input: { backgroundColor: BG, borderRadius: 10, borderWidth: 1, borderColor: BORDER, padding: 12, fontSize: 14, color: T, marginBottom: 14 },
   amtRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
   amtSym: { fontSize: 16, fontFamily: 'Inter_700Bold', color: TM },
   methodsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
-  methodBtn: { borderRadius: 10, borderWidth: 1, borderColor: BORDER, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: BG },
+  methodBtn: { borderRadius: 10, borderWidth: 1, borderColor: BORDER, paddingHorizontal: 14, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: BG },
   methodActive: { backgroundColor: P, borderColor: P },
   methodTxt: { fontSize: 13, color: TM, fontFamily: 'Inter_500Medium' },
   submit: { backgroundColor: S, borderRadius: 14, padding: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
@@ -237,4 +370,6 @@ const s = StyleSheet.create({
   optionActive: { backgroundColor: '#EEF2FF' },
   optionTxt: { fontSize: 15, color: T, textAlign: 'right', fontFamily: 'Inter_500Medium' },
   optionSub: { fontSize: 12, color: '#D97706', textAlign: 'right', marginTop: 2 },
+  lockBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#6B7280', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
+  lockTxt: { color: '#FFF', fontSize: 11 },
 });

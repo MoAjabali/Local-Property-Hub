@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import {
   View, Text, FlatList, StyleSheet, TouchableOpacity,
-  Modal, TextInput, KeyboardAvoidingView, Platform,
+  Modal, TextInput, KeyboardAvoidingView, Platform, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useApp } from '@/context/AppContext';
+import { useSubscription } from '@/context/SubscriptionContext';
 
 const P = '#1B4B82'; const BG = '#F5F7FA'; const CARD = '#FFFFFF';
 const T = '#1A1A2E'; const TM = '#6B7280'; const BORDER = '#E5E7EB';
@@ -14,11 +15,27 @@ const S = '#10B981'; const BLUE = '#3B82F6';
 
 export default function PropertiesScreen() {
   const { buildings, addBuilding, getBuildingStats } = useApp();
+  const { canAddBuilding, isPremium } = useSubscription();
   const insets = useSafeAreaInsets();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [saving, setSaving] = useState(false);
+
+  const handleAddPress = () => {
+    if (!canAddBuilding(buildings.length)) {
+      Alert.alert(
+        '🔒 الحد المجاني',
+        'يمكنك إضافة مبنى واحد فقط في النسخة المجانية.\nقم بالترقية للحصول على مبانٍ غير محدودة.',
+        [
+          { text: 'ترقية الآن', onPress: () => router.push('/subscription') },
+          { text: 'إلغاء', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+    setShowForm(true);
+  };
 
   const handleAdd = async () => {
     if (!name.trim()) return;
@@ -31,10 +48,29 @@ export default function PropertiesScreen() {
     <View style={[s.container, { backgroundColor: BG }]}>
       <View style={[s.header, { paddingTop: insets.top + 12 }]}>
         <Text style={s.title}>عقاراتي</Text>
-        <TouchableOpacity onPress={() => setShowForm(true)} style={s.addBtn}>
-          <Ionicons name="add" size={24} color="#FFF" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          {!isPremium && (
+            <TouchableOpacity style={s.upgradeBtn} onPress={() => router.push('/subscription')}>
+              <Ionicons name="star" size={14} color="#C9A84C" />
+              <Text style={s.upgradeTxt}>ترقية</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={handleAddPress} style={s.addBtn}>
+            <Ionicons name="add" size={24} color="#FFF" />
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {/* Free tier banner */}
+      {!isPremium && (
+        <TouchableOpacity style={s.freeBanner} onPress={() => router.push('/subscription')}>
+          <Ionicons name="lock-closed" size={14} color="#D97706" />
+          <Text style={s.freeBannerTxt}>
+            النسخة المجانية: {buildings.length}/1 مبنى • 3 وحدات كحد أقصى
+          </Text>
+          <Text style={s.freeBannerLink}>ترقية ←</Text>
+        </TouchableOpacity>
+      )}
 
       {buildings.length === 0 ? (
         <View style={s.empty}>
@@ -113,6 +149,11 @@ const s = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: P },
   title: { fontSize: 20, fontFamily: 'Inter_700Bold', color: '#FFF' },
   addBtn: { width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.2)', justifyContent: 'center', alignItems: 'center' },
+  upgradeBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#FEF9EE', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  upgradeTxt: { fontSize: 12, color: '#D97706', fontFamily: 'Inter_600SemiBold' },
+  freeBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#FEF9EE', borderBottomWidth: 1, borderBottomColor: '#FDE68A', paddingHorizontal: 16, paddingVertical: 10 },
+  freeBannerTxt: { flex: 1, fontSize: 12, color: '#92400E', textAlign: 'right' },
+  freeBannerLink: { fontSize: 12, color: '#D97706', fontFamily: 'Inter_700Bold' },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8 },
   emptyT: { fontSize: 18, fontFamily: 'Inter_600SemiBold', color: TM },
   emptySub: { fontSize: 14, color: TM },
