@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useApp } from '@/context/AppContext';
+import { useSubscription } from '@/context/SubscriptionContext';
 import { getUnitStatusColor, getUnitStatusLabel } from '@/utils/formatters';
 import { UnitStatus } from '@/types';
 
@@ -17,8 +18,9 @@ export default function BuildingDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const {
     getBuildingById, getFloorsByBuilding, getUnitsByFloor, getActiveContractForUnit,
-    addFloor, addUnit, deleteBuilding,
+    addFloor, addUnit, deleteBuilding, units,
   } = useApp();
+  const { canAddUnit } = useSubscription();
   const insets = useSafeAreaInsets();
 
   const [showFloorForm, setShowFloorForm] = useState(false);
@@ -48,9 +50,35 @@ export default function BuildingDetailScreen() {
 
   const handleAddUnit = async () => {
     if (!unitNum.trim() || !selectedFloorId) return;
+    if (!canAddUnit(units.length)) {
+      Alert.alert(
+        '🔒 الحد المجاني',
+        'النسخة المجانية تسمح بـ 3 وحدات فقط. قم بالترقية لإضافة وحدات غير محدودة.',
+        [
+          { text: 'ترقية الآن', onPress: () => router.push('/subscription') },
+          { text: 'إلغاء', style: 'cancel' },
+        ]
+      );
+      return;
+    }
     setSaving(true);
     await addUnit({ floorId: selectedFloorId, unitNumber: unitNum.trim(), status: 'vacant' });
     setUnitNum(''); setShowUnitForm(false); setSaving(false);
+  };
+
+  const openUnitForm = () => {
+    if (!canAddUnit(units.length)) {
+      Alert.alert(
+        '🔒 الحد المجاني',
+        'النسخة المجانية تسمح بـ 3 وحدات فقط. قم بالترقية لإضافة وحدات غير محدودة.',
+        [
+          { text: 'ترقية الآن', onPress: () => router.push('/subscription') },
+          { text: 'إلغاء', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+    setShowUnitForm(true);
   };
 
   const handleDelete = () => {
@@ -94,7 +122,7 @@ export default function BuildingDetailScreen() {
                 <View style={s.floorHeader}>
                   <TouchableOpacity
                     style={s.addUnitBtn}
-                    onPress={() => { setSelectedFloorId(floor.id); setShowUnitForm(true); }}
+                    onPress={() => { setSelectedFloorId(floor.id); openUnitForm(); }}
                   >
                     <Ionicons name="add" size={16} color={P} />
                     <Text style={s.addUnitTxt}>وحدة</Text>

@@ -16,7 +16,7 @@ const S = '#10B981'; const A = '#C9A84C';
 
 export default function SettingsScreen() {
   const { settings, currencies, exchangeRates, updateSettings, addCurrency, setBaseCurrency, addExchangeRate } = useApp();
-  const { subscription, isPremium, canUseBackup, tier } = useSubscription();
+  const { subscription, isPremium, canUseBackup, canUseForeignCurrency, tier } = useSubscription();
   const insets = useSafeAreaInsets();
 
   const [ownerName, setOwnerName] = useState(settings.ownerName);
@@ -45,6 +45,18 @@ export default function SettingsScreen() {
 
   const handleAddCurrency = async () => {
     if (!curCode.trim() || !curName.trim() || !curSymbol.trim()) return;
+    if (!canUseForeignCurrency()) {
+      setShowCurrencyForm(false);
+      Alert.alert(
+        '🔒 ميزة مدفوعة',
+        'إضافة العملات الأجنبية متاحة في النسخة المدفوعة فقط.',
+        [
+          { text: 'ترقية الآن', onPress: () => router.push('/subscription') },
+          { text: 'إلغاء', style: 'cancel' },
+        ]
+      );
+      return;
+    }
     setSaving(true);
     await addCurrency({ code: curCode.trim().toUpperCase(), name: curName.trim(), symbol: curSymbol.trim(), isBase: false });
     setCurCode(''); setCurName(''); setCurSymbol(''); setShowCurrencyForm(false); setSaving(false);
@@ -143,7 +155,7 @@ export default function SettingsScreen() {
           <Text style={s.cardTitle}>
             النسخ الاحتياطي والاستعادة {!canUseBackup() ? '🔒' : ''}
           </Text>
-          <Text style={s.cardSubtitle}>تصدير بياناتك واستيرادها عبر ملف JSON</Text>
+          <Text style={s.cardSubtitle}>تصدير بياناتك واستيرادها عبر ملف JSON — اختر Google Drive من نافذة المشاركة لحفظه سحابياً</Text>
 
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
             <TouchableOpacity
@@ -181,6 +193,9 @@ export default function SettingsScreen() {
               <Text style={s.upgradeLinkTxt}>ترقية للوصول إلى النسخ الاحتياطي ←</Text>
             </TouchableOpacity>
           )}
+          {isPremium && (
+            <Text style={s.backupHint}>ستفتح نافذة المشاركة؛ اختر Google Drive أو أي خدمة تخزين لحفظ النسخة.</Text>
+          )}
         </View>
 
         {/* Currencies */}
@@ -190,7 +205,7 @@ export default function SettingsScreen() {
               <Ionicons name="add" size={18} color={P} />
               <Text style={s.addSmTxt}>إضافة</Text>
             </TouchableOpacity>
-            <Text style={s.cardTitle}>العملات</Text>
+            <Text style={s.cardTitle}>العملات {!canUseForeignCurrency() ? '🔒' : ''}</Text>
           </View>
           {currencies.map(c => (
             <View key={c.id} style={s.currencyRow}>
@@ -319,6 +334,7 @@ const s = StyleSheet.create({
   backupBtnTxt: { color: '#FFF', fontFamily: 'Inter_600SemiBold', fontSize: 14 },
   upgradeLink: { marginTop: 12, padding: 8, alignItems: 'center' },
   upgradeLinkTxt: { color: P, fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  backupHint: { marginTop: 10, color: TM, fontSize: 11, lineHeight: 17, textAlign: 'right' },
   addSmBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EEF2FF', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, gap: 4 },
   addSmTxt: { color: P, fontSize: 13, fontFamily: 'Inter_500Medium' },
   currencyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },

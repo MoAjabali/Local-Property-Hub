@@ -33,4 +33,8 @@ description: Key decisions and gotchas for the إمتلاك Arabic RTL Expo prop
 ## Default seed
 - If no currencies in storage, seeds `{ id: 'sar-001', code: 'SAR', name: 'ريال سعودي', symbol: 'ر.س', isBase: true }`
 
+## Monetization and backups
+- Subscription access is local/mock-only by design: free limits are enforced in UI flows and paid tiers are persisted in AsyncStorage; no real payment provider is connected.
+- PDF receipts use Expo Print/Sharing, and backup export/import uses JSON plus the native share/file-picker flow. Direct Google Drive OAuth requires the user to authorize the Google Drive connector; without it, users can choose Drive from the system share sheet.
+
 **Why:** Offshore state and pure AsyncStorage was chosen because this is a single-owner offline app; no server needed per the spec.
