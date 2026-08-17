@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -30,11 +30,8 @@ export async function exportBackup(): Promise<boolean> {
 
     const json = JSON.stringify(backup, null, 2);
     const filename = `imtelak-backup-${new Date().toISOString().split('T')[0]}.json`;
-    const fileUri = FileSystem.cacheDirectory + filename;
-
-    await FileSystem.writeAsStringAsync(fileUri, json, {
-      encoding: FileSystem.EncodingType.UTF8,
-    });
+    const file = new File(Paths.cache, filename);
+    file.write(json);
 
     const canShare = await Sharing.isAvailableAsync();
     if (!canShare) {
@@ -42,7 +39,7 @@ export async function exportBackup(): Promise<boolean> {
       return false;
     }
 
-    await Sharing.shareAsync(fileUri, {
+    await Sharing.shareAsync(file.uri, {
       mimeType: 'application/json',
       dialogTitle: 'حفظ نسخة احتياطية',
     });
@@ -64,9 +61,7 @@ export async function importBackup(): Promise<boolean> {
     if (result.canceled || !result.assets || result.assets.length === 0) return false;
 
     const fileUri = result.assets[0].uri;
-    const json = await FileSystem.readAsStringAsync(fileUri, {
-      encoding: FileSystem.EncodingType.UTF8,
-    });
+    const json = await new File(fileUri).text();
 
     const backup: BackupData = JSON.parse(json);
 
