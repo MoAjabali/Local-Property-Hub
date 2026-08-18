@@ -1,12 +1,17 @@
 export type UnitStatus = 'vacant' | 'rented' | 'under_maintenance' | 'after_exit';
 export type PaymentMethod = 'cash' | 'bank_transfer' | 'cheque';
 export type BackupFrequency = 'daily' | 'weekly' | 'monthly' | 'manual';
-export type SubscriptionTier = 'free' | 'monthly' | 'annual' | 'lifetime';
+export type SubscriptionTier = 'free' | 'monthly' | 'quarterly' | 'yearly' | 'lifetime';
 
 export interface Subscription {
   tier: SubscriptionTier;
   startDate?: string;
-  expiryDate?: string; // undefined = no expiry (lifetime)
+  expiryDate?: string;
+  subscriberId?: string;
+  firstInstallDate?: string;
+  lastOpenDate?: string;
+  usedCodes?: string[];
+  tamperLocked?: boolean;
 }
 
 export interface SubscriptionPlan {
@@ -117,6 +122,11 @@ export interface AppSettings {
   defaultCurrencyId: string;
   backupFrequency: BackupFrequency;
   lastBackupDate?: string;
+  bankName?: string;
+  bankAccountName?: string;
+  bankAccountNumber?: string;
+  bankSwift?: string;
+  whatsappNumber?: string;
 }
 
 export interface PLReport {

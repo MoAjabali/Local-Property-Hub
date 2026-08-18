@@ -13,6 +13,11 @@ const DEFAULT_CURRENCY: Currency = {
 };
 const DEFAULT_SETTINGS: AppSettings = {
   ownerName: 'المالك', defaultCurrencyId: DEFAULT_CURRENCY_ID, backupFrequency: 'monthly',
+  bankName: '',
+  bankAccountName: '',
+  bankAccountNumber: '',
+  bankSwift: '',
+  whatsappNumber: '',
 };
 
 interface AppContextType {
